@@ -38,7 +38,7 @@
     "gauge": "^2.7.4",
     "lodash": "^4.17.15",
     "moment": "^2.24.0",
-    "nedb": "^1.8.0",
+    "@arif-rachim/nedb-node-24": "^1.8.1",
     "npm-conf": "^1.1.3",
     "pacote": "^9.5.8",
     "rimraf": "^3.0.0",
