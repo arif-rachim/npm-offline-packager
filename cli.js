@@ -12,7 +12,7 @@ const { execSync } = require('child_process');
 const { green, red, yellow } = require('chalk').default;
 const { existsSync, readFileSync, lstatSync, mkdirSync, readdirSync } = require('fs');
 const { resolvedPackages } = require('./lib/cache');
-const { resolveDependencies, downloadPackages } = require('./lib/fetch-packages');
+const { resolveDependencies, resolveFromLockfile, downloadPackages } = require('./lib/fetch-packages');
 const { publishFolder, publishTarball } = require('./lib/npm-publish');
 const { getNpmTopPackages } = require('./lib/npm-top');
 const currPackageJson = require('./package');
@@ -35,6 +35,7 @@ commander
     .description('Fetch packages tarball from npm registry')
     .alias('f')
     .option('-p, --package-json <packageJson>', 'The path to package.json file')
+    .option('-l, --package-lock <packageLock>', 'The path to package-lock.json file (npm lockfileVersion 2 or 3). Uses exact pinned versions and the full installed tree; bypasses the recursive resolver.')
     .option('--top <top>', 'Fetch top packages from npm registry api. <max: 5250>', parseInt)
     .option('-d, --dest <dest>', 'Packages destination folder')
     .option('--no-tar', 'Whether to create tar file from all packages')
@@ -50,6 +51,7 @@ commander
             let currStage = 1;
             const stages = command.top && !command.packageJson && !packages.length ? 3 : 2;
             let packagesObj;
+            let dependencies = null;
 
 
             // Logger function for progress bar
@@ -58,7 +60,27 @@ commander
                 gauge.show(`[${currStage}/${stages}] ${message}`, percent);
             };
 
-            if (command.packageJson) {
+            // Lockfile mode short-circuits the recursive resolver: versions are exact, the tree is flat,
+            // and dev/peer/optional are gated by the same flags as the package.json path.
+            if (command.packageLock) {
+                let lockfilePath = command.packageLock;
+                if (lstatSync(lockfilePath).isDirectory()) {
+                    lockfilePath = join(lockfilePath, 'package-lock.json');
+                }
+
+                if (!existsSync(lockfilePath)) {
+                    throw new Error(`The path "${lockfilePath}" not existed`);
+                }
+
+                dependencies = resolveFromLockfile(lockfilePath, {
+                    dev: command.dev,
+                    peer: command.peer,
+                    optional: command.optional,
+                });
+
+                shell.echo(green(`[${currStage}/${stages}] Resolving dependencies from lockfile completed with ${dependencies.length} packages`));
+                currStage++;
+            } else if (command.packageJson) {
                 let packageJsonPath = command.packageJson;
                 if (lstatSync(packageJsonPath).isDirectory()) {
                     packageJsonPath = join(command.packageJson, 'package.json');
@@ -106,17 +128,20 @@ commander
                 currStage++;
             }
 
-            if (!packagesObj || !packagesObj.dependencies) {
+            if (!dependencies && (!packagesObj || !packagesObj.dependencies)) {
                 return shell.echo(yellow(`Required arguments is missing.
     Please run:
         ${green('// For packages list')}
         npo fetch package1 package2
 
         ${green('// For package.json file')}
-        npm fetch -p ./package.json
+        npo fetch -p ./package.json
+
+        ${green('// For package-lock.json file')}
+        npo fetch -l ./package-lock.json
 
         ${green('// To fetch top npm packages')}
-        npm fetch --top 1000`));
+        npo fetch --top 1000`));
             }
 
             // Create destination folder
@@ -127,19 +152,21 @@ commander
             // Clean packages in memory cache
             resolvedPackages.clean();
 
-            // Resolve dependencies tree
-            logger('Resolving dependencies...');
-            const dependencies = await resolveDependencies(packagesObj, {
-                dev: command.dev,
-                peer: command.peer,
-                optional: command.optional,
-                registry: command.registry,
-                logger,
-            });
+            // Resolve dependencies tree (skipped in lockfile mode — already flat & exact)
+            if (!dependencies) {
+                logger('Resolving dependencies...');
+                dependencies = await resolveDependencies(packagesObj, {
+                    dev: command.dev,
+                    peer: command.peer,
+                    optional: command.optional,
+                    registry: command.registry,
+                    logger,
+                });
 
-            gauge.hide();
-            shell.echo(green(`[${currStage}/${stages}] Resolving dependencies completed with ${dependencies.length} packages`));
-            currStage++;
+                gauge.hide();
+                shell.echo(green(`[${currStage}/${stages}] Resolving dependencies completed with ${dependencies.length} packages`));
+                currStage++;
+            }
 
             logger('Fetching packages...');
             const result = await downloadPackages(dependencies, {

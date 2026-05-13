@@ -15,13 +15,16 @@ $ npm install -g npm-offline-packager
 ### npo fetch - Fetch packages tarball from npm registry
 
 ```bash
- $ npo fetch <list of packages or a path to package-json file>
+ $ npo fetch <list of packages or a path to package-json/package-lock file>
 ```
 
 ```
   Options:
 
     -p, --package-json <packageJson>  The path to package.json file
+    -l, --package-lock <packageLock>  The path to package-lock.json file (npm lockfileVersion 2 or 3).
+                                      Uses exact pinned versions and the full installed tree;
+                                      bypasses the recursive resolver.
     --top <top>                       Fetch top packages from npm registry api. <max: 5250>
     -d, --dest <dest>                 Packages destination folder
     --no-tar                          Whether to create tar file from all packages
@@ -45,10 +48,29 @@ To fetch dependencies from package.json file
  $ npo fetch -p ./package.json
 ```
 
+To fetch the exact installed tree from package-lock.json (recommended for reproducible offline bundles)
+```bash
+ $ npo fetch -l ./package-lock.json --dev --peer --optional
+```
+
 To fetch top n packages from npm registry api
 ```bash
  $ npo fetch --top n
 ```
+
+#### `-p` vs `-l`: which to use?
+
+| | `-p, --package-json` | `-l, --package-lock` |
+|---|---|---|
+| Versions | Semver ranges, resolved against the registry at fetch time | Exact pinned versions from the lockfile |
+| Transitive deps | Resolved recursively via `pacote.manifest()` | Already flat in the lockfile — no extra network calls |
+| Platform-specific optional deps (`@esbuild/*`, `@rollup/*`, etc.) | Only those matching the current OS, and only with `--optional` | All platforms that npm recorded at install time |
+| Aliased / git / file deps | Not supported reliably (semver coerce strips `^`/`~` only) | Honored via the lockfile's `version` field |
+| Reproducibility | Different runs may resolve to different versions | Bit-for-bit matches the project's lockfile |
+
+Use `-l` when you want the offline bundle to match exactly what was installed on the source machine (typical for mirroring a project to a private registry). Use `-p` for quick one-off fetches or when you don't have a lockfile.
+
+`--package-lock` requires npm lockfileVersion 2 or 3 (npm >= 7). For older lockfiles, regenerate with `rm package-lock.json && npm install` on a modern npm.
 
 ### npo publish - Publish packages tarball to private npm registry
 
